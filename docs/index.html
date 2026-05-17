@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Craft - Optimized Biomes</title>
+    <title>3D Craft - Perfect Generation & Physics</title>
     <style>
         html, body {
             margin: 0;
@@ -17,6 +17,7 @@
             display: block;
             width: 100vw;
             height: 100vh;
+            image-rendering: pixelated;
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -26,77 +27,81 @@
     <script>
         const WORLD_SIZE = 64;
         const BLOCK_SIZE = 1;
-        const SEA_LEVEL = 6; // Standardized ocean level marker
+        const SEA_LEVEL = 5;
         
         const BLOCK_TYPES = {
-            1: { name: 'Grass', color: '#5c8e32', hex: 0x5c8e32 },
-            2: { name: 'Dirt', color: '#866043', hex: 0x866043 },
-            3: { name: 'Stone', color: '#737373', hex: 0x737373 },
-            4: { name: 'Leaves', color: '#3b6e16', hex: 0x3b6e16 },
-            5: { name: 'Wood', color: '#9c774c', hex: 0x9c774c },
-            6: { name: 'Sand', color: '#dbca98', hex: 0xdbca98 },
-            7: { name: 'Water', color: '#4466cc', hex: 0x4466cc }
+            1: { name: 'Grass', color: '#5c8e32', hex: 0x5c8e32, transparent: false, opacity: 1.0 },
+            2: { name: 'Dirt', color: '#866043', hex: 0x866043, transparent: false, opacity: 1.0 },
+            3: { name: 'Stone', color: '#737373', hex: 0x737373, transparent: false, opacity: 1.0 },
+            4: { name: 'Leaves', color: '#3b6e16', hex: 0x3b6e16, transparent: true, opacity: 1.0 },
+            5: { name: 'Wood', color: '#9c774c', hex: 0x9c774c, transparent: false, opacity: 1.0 },
+            6: { name: 'Sand', color: '#dbca98', hex: 0xdbca98, transparent: false, opacity: 1.0 },
+            7: { name: 'Water', color: '#4466cc', hex: 0x4466cc, transparent: true, opacity: 0.6 }
         };
 
+        // Water is removed from buildable inventory selection
         let selectedBlockType = 1; 
-        const inventory = [1, 2, 3, 4, 5, 6, 7];
+        const inventory = [1, 2, 3, 4, 5, 6]; 
 
-        // --- FAST MC TEXTURE GENERATOR ---
+        // --- CRISP RASTER TEXTURE GENERATOR ---
         function createMCTexture(id) {
             const size = 16;
-            const data = new Uint8Array(size * size * 3);
+            const data = new Uint8Array(size * size * 4); // RGBA map
             
             for (let i = 0; i < size * size; i++) {
                 const x = i % size;
                 const y = Math.floor(i / size);
-                let r = 0, g = 0, b = 0;
+                let r = 0, g = 0, b = 0, a = 255;
                 let noise = Math.random() * 20 - 10;
 
                 switch(id) {
-                    case 1: // Grass
+                    case 1: // Grass block face
                         if (y < 4 || (y < 7 && Math.random() > 0.4)) {
                             r = 92 + noise; g = 142 + noise; b = 50;
                         } else {
                             r = 134 + noise; g = 96 + noise; b = 67 + noise;
                         }
                         break;
-                    case 2: // Dirt
+                    case 2: // Dirt core
                         r = 134 + noise; g = 96 + noise; b = 67 + noise;
                         break;
-                    case 3: // Stone
-                        let stoneNoise = Math.random() * 24 - 12;
-                        r = 115 + stoneNoise; g = 115 + stoneNoise; b = 115 + stoneNoise;
-                        if((x+y) % 5 === 0) { r -= 20; g -= 20; b -= 20; }
+                    case 3: // Stone veins
+                        let sNoise = Math.random() * 24 - 12;
+                        r = 115 + sNoise; g = 115 + sNoise; b = 115 + sNoise;
+                        if((x+y) % 5 === 0) { r -= 25; g -= 25; b -= 25; }
                         break;
-                    case 4: // Leaves
+                    case 4: // Transparent Leaves
                         r = 59 + noise; g = 110 + noise; b = 22;
+                        if (Math.random() > 0.82) { r=0; g=0; b=0; a=0; } // True alpha cutout holes
                         break;
-                    case 5: // Wood Log
-                        if (x === 0 || x === 15 || y % 4 === 0) { r = 80; g = 55; b = 35; } 
+                    case 5: // Wood Trunk
+                        if (x === 0 || x === 15 || y % 4 === 0) { r = 75; g = 50; b = 30; } 
                         else { r = 156 + noise; g = 119 + noise; b = 76; }
                         break;
-                    case 6: // Sand
+                    case 6: // Sand grit
                         r = 219 + noise; g = 202 + noise; b = 152;
                         break;
                     case 7: // Water
-                        r = 55; g = 95 + Math.sin(x*0.5)*8; b = 220 + noise;
+                        r = 50; g = 90 + Math.sin(x*0.5)*5; b = 215 + noise;
                         break;
                 }
 
-                const stride = i * 3;
+                const stride = i * 4;
                 data[stride]     = Math.max(0, Math.min(255, r));
                 data[stride + 1] = Math.max(0, Math.min(255, g));
                 data[stride + 2] = Math.max(0, Math.min(255, b));
+                data[stride + 3] = a;
             }
             
-            const texture = new THREE.DataTexture(data, size, size, THREE.RGBFormat);
+            const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+            // Block fuzzy linear interpolation stretching (fixes blur)
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             texture.needsUpdate = true;
             return texture;
         }
 
-        // --- ENGINE SETUP ---
+        // --- CORE SETUP ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x4a85e8);
         scene.fog = new THREE.FogExp2(0x4a85e8, 0.035);
@@ -106,9 +111,9 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
         scene.add(ambientLight);
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.4);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.35);
         directionalLight.position.set(20, 40, 10);
         scene.add(directionalLight);
 
@@ -122,19 +127,25 @@
         Object.keys(BLOCK_TYPES).forEach(id => {
             materials[id] = new THREE.MeshLambertMaterial({ 
                 map: createMCTexture(parseInt(id)),
-                transparent: id == 7 ? true : false,
-                opacity: id == 7 ? 0.7 : 1.0
+                transparent: BLOCK_TYPES[id].transparent,
+                opacity: BLOCK_TYPES[id].opacity,
+                side: THREE.DoubleSide
             });
             wireframeMaterials[id] = new THREE.MeshBasicMaterial({ color: BLOCK_TYPES[id].hex, wireframe: true });
         });
 
         const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
 
-        // --- HUD SPRITE DRAWING MACHINE ---
+        // --- SHARP 2D SPRITE HUD OVERLAY ---
         const hudCanvas = document.createElement('canvas');
         hudCanvas.width = 1024; hudCanvas.height = 1024;
         const hudCtx = hudCanvas.getContext('2d');
         const hudTexture = new THREE.CanvasTexture(hudCanvas);
+        
+        // Ensure HUD text elements maintain razor sharp rendering profiles
+        hudTexture.magFilter = THREE.NearestFilter;
+        hudTexture.minFilter = THREE.NearestFilter;
+
         const hudSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: hudTexture }));
         const hudCamera = new THREE.OrthographicCamera(-512, 512, 512, -512, 1, 10);
         hudSprite.position.set(0, 0, -1); hudSprite.scale.set(1024, 1024, 1);
@@ -147,90 +158,90 @@
             hudCtx.strokeStyle = 'rgba(255,255,255,0.9)';
             hudCtx.lineWidth = 4;
             hudCtx.beginPath();
-            hudCtx.moveTo(512 - 15, 512); hudCtx.lineTo(512 + 15, 512);
-            hudCtx.moveTo(512, 512 - 15); hudCtx.lineTo(512, 512 + 15);
+            hudCtx.moveTo(512 - 12, 512); hudCtx.lineTo(512 + 12, 512);
+            hudCtx.moveTo(512, 512 - 12); hudCtx.lineTo(512, 512 + 12);
             hudCtx.stroke();
 
-            // Guide Box Window
-            hudCtx.fillStyle = 'rgba(12, 12, 18, 0.85)';
-            hudCtx.fillRect(20, 20, 430, 240);
+            // Instruction Control Box
+            hudCtx.fillStyle = 'rgba(10, 10, 15, 0.88)';
+            hudCtx.fillRect(20, 20, 440, 230);
             hudCtx.fillStyle = '#5c8e32';
             hudCtx.font = 'bold 18px Courier New';
-            hudCtx.fillText("MINECRAFT 3D (LAG FIXED)", 35, 50);
+            hudCtx.fillText("MINECRAFT 3D Engine Engine", 35, 50);
             hudCtx.fillStyle = 'white';
             hudCtx.font = '15px Courier New';
-            hudCtx.fillText("• Click Screen : Lock Cursor & Focus Frame", 35, 85);
-            hudCtx.fillText("• Hold SHIFT   : Look around without Locking", 35, 115);
-            hudCtx.fillText("• WASD / SPACE : Move and Jump", 35, 145);
-            hudCtx.fillText("• M / N Key    : Place / Break Block", 35, 175);
-            hudCtx.fillText("• 1 to 7 / H   : Select Items / Toggle Hitboxes", 35, 205);
+            hudCtx.fillText("• Click Screen : Lock Cursor Context", 35, 85);
+            hudCtx.fillText("• Hold SHIFT   : Trackpad Look Fallback", 35, 115);
+            hudCtx.fillText("• WASD / SPACE : Move / Swim / Jump", 35, 145);
+            hudCtx.fillText("• M / N Key    : Place Block / Break Block", 35, 175);
+            hudCtx.fillText("• 1 to 6 / H   : Change Slot / Toggle Wireframe", 35, 205);
 
-            // Hotbar Inventory Elements
-            let startX = 512 - (7 * 70) / 2;
-            for (let i = 0; i < 7; i++) {
+            // Inventory Hotbar Drawing (Excludes un-placable fluid water)
+            let startX = 512 - (6 * 70) / 2;
+            for (let i = 0; i < 6; i++) {
                 let x = startX + (i * 70); let y = 920;
                 let bId = inventory[i];
                 let isActive = (bId === selectedBlockType);
 
-                hudCtx.fillStyle = isActive ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.7)';
+                hudCtx.fillStyle = isActive ? 'rgba(255, 255, 255, 0.45)' : 'rgba(0, 0, 0, 0.75)';
                 hudCtx.fillRect(x, y, 64, 64);
-                hudCtx.strokeStyle = isActive ? '#ffffff' : '#333333';
+                hudCtx.strokeStyle = isActive ? '#ffffff' : '#444444';
                 hudCtx.lineWidth = isActive ? 4 : 2;
                 hudCtx.strokeRect(x, y, 64, 64);
 
                 hudCtx.fillStyle = BLOCK_TYPES[bId].color;
-                hudCtx.fillRect(x + 6, y + 6, 16, 16);
+                hudCtx.fillRect(x + 8, y + 8, 16, 16);
 
                 hudCtx.fillStyle = 'white';
                 hudCtx.font = 'bold 12px Courier New';
-                hudCtx.fillText(BLOCK_TYPES[bId].name, x + 5, y + 46);
-                hudCtx.fillText(i + 1, x + 48, y + 18);
+                hudCtx.fillText(BLOCK_TYPES[bId].name, x + 5, y + 48);
+                hudCtx.fillText(i + 1, x + 48, y + 20);
             }
             hudTexture.needsUpdate = true;
         }
 
-        // --- INITIAL DATA LEVEL LOAD ---
-        // Step 1: Pre-calculate the block layouts inside a virtual data matrix array
+        // --- NATURAL WORLD LAYER MATRIX GENERATOR ---
         const rawMapData = {};
         
-        function buildMapMatrix() {
+        function buildNaturalTerrain() {
             for (let x = 0; x < WORLD_SIZE; x++) {
                 for (let z = 0; z < WORLD_SIZE; z++) {
-                    // Split map cleanly into 2 biomes down the middle axis
+                    
                     let isPlains = x > 28;
-                    let height = SEA_LEVEL;
+                    let surfaceHeight = SEA_LEVEL;
 
                     if (isPlains) {
-                        // Plains Biome: Rolling green hills
-                        height = Math.floor((Math.sin(x * 0.1) * Math.cos(z * 0.1) * 3) + 9);
+                        // Coherent cosine curve rolling hills pattern
+                        surfaceHeight = Math.floor((Math.sin(x * 0.12) * Math.cos(z * 0.12) * 3) + 9);
                     } else {
-                        // Beach Biome: Sloped entry path leading straight to standard sea bottom
-                        height = Math.floor(SEA_LEVEL + (x - 28) * 0.25);
+                        // Soft beach incline heading out into oceanic beds
+                        surfaceHeight = Math.floor(SEA_LEVEL + (x - 28) * 0.3);
                     }
-                    if(height < 2) height = 2;
+                    if(surfaceHeight < 1) surfaceHeight = 1;
 
-                    for (let y = 0; y <= Math.max(height, SEA_LEVEL); y++) {
+                    // Absolute vertical stack execution (Stops awkward underground air chambers)
+                    for (let y = 0; y <= Math.max(surfaceHeight, SEA_LEVEL); y++) {
                         let type = 0;
-                        if (y <= height) {
+                        if (y <= surfaceHeight) {
                             if (isPlains) {
-                                if (y === height) type = 1; // Grass
-                                else if (y > height - 3) type = 2; // Dirt
-                                else type = 3; // Stone
+                                if (y === surfaceHeight) type = 1;      // Grass top cover
+                                else if (y > surfaceHeight - 3) type = 2; // Strict Dirt underlayment
+                                else type = 3;                           // Solid foundational stone core
                             } else {
-                                type = 6; // Sand beach floor
+                                type = 6; // Sandy coast substrate
                             }
                         } else if (y <= SEA_LEVEL) {
-                            type = 7; // Water layer
+                            type = 7; // Natural fluid water filling valleys
                         }
                         if(type > 0) rawMapData[blockKey(x, y, z)] = type;
                     }
 
-                    // Tree structures grown directly on plain sectors
-                    if (isPlains && x < WORLD_SIZE-3 && z > 2 && z < WORLD_SIZE-3 && Math.random() < 0.03) {
-                        if (rawMapData[blockKey(x, height, z)] === 1) {
+                    // Natural tree structures generated strictly on valid plains sector surfaces
+                    if (isPlains && x < WORLD_SIZE-3 && z > 2 && z < WORLD_SIZE-3 && Math.random() < 0.025) {
+                        if (rawMapData[blockKey(x, surfaceHeight, z)] === 1) {
                             let trunk = 4 + Math.floor(Math.random()*2);
-                            for(let t=1; t<=trunk; t++) rawMapData[blockKey(x, height+t, z)] = 5;
-                            let lb = height + trunk - 1;
+                            for(let t=1; t<=trunk; t++) rawMapData[blockKey(x, surfaceHeight+t, z)] = 5;
+                            let lb = surfaceHeight + trunk - 1;
                             for(let lx=-2; lx<=2; lx++) {
                                 for(let lz=-2; lz<=2; lz++) {
                                     for(let ly=0; ly<=3; ly++) {
@@ -246,15 +257,17 @@
             }
         }
 
-        // --- FACE CULLING OPTIMIZATION ---
-        // Step 2: Instantiates meshes ONLY if a block is adjacent to an open air pocket
-        function renderMapFromMatrix() {
+        // --- MESH FACE OCClUSION CULLER ---
+        function renderCullEngine() {
+            // Wipe existing old scene structures clean
+            Object.keys(blockMeshes).forEach(k => { if(blockMeshes[k]) scene.remove(blockMeshes[k]); });
+            
             Object.keys(rawMapData).forEach(key => {
                 let parts = key.split(',').map(Number);
                 let x = parts[0], y = parts[1], z = parts[2];
                 let type = rawMapData[key];
 
-                // Scan adjacent blocks
+                // Face visibility verification checks against adjacent items
                 let hidden = rawMapData[blockKey(x+1, y, z)] &&
                              rawMapData[blockKey(x-1, y, z)] &&
                              rawMapData[blockKey(x, y+1, z)] &&
@@ -262,7 +275,7 @@
                              rawMapData[blockKey(x, y, z+1)] &&
                              rawMapData[blockKey(x, y, z-1)];
 
-                // If completely sealed by other items, skip making a graphics component! (Eliminates lag)
+                // Water and leaves always trigger rendering logic to retain transparency effects
                 if (!hidden || type === 7 || type === 4) { 
                     worldBlocks[key] = type;
                     const mesh = new THREE.Mesh(geometry, materials[type]);
@@ -270,38 +283,62 @@
                     scene.add(mesh);
                     blockMeshes[key] = mesh;
                 } else {
-                    worldBlocks[key] = type; // Keep record entry for physical collisions
+                    worldBlocks[key] = type; 
                 }
             });
         }
 
-        buildMapMatrix();
-        renderMapFromMatrix();
+        buildNaturalTerrain();
+        renderCullEngine();
 
         function spawnBlock(x, y, z, type) {
-            const key = blockKey(x, y, z);
-            if(worldBlocks[key]) removeBlock(x,y,z);
-            worldBlocks[key] = type;
-            const mesh = new THREE.Mesh(geometry, showHitboxes ? wireframeMaterials[type] : materials[type]);
-            mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
-            scene.add(mesh);
-            blockMeshes[key] = mesh;
+            rawMapData[blockKey(x, y, z)] = type;
+            renderCullEngine();
         }
 
         function removeBlock(x, y, z) {
-            const key = blockKey(x, y, z);
-            if (worldBlocks[key]) {
-                if(blockMeshes[key]) scene.remove(blockMeshes[key]);
-                delete worldBlocks[key];
-                delete blockMeshes[key];
-                return true;
-            }
-            return false;
+            delete rawMapData[blockKey(x, y, z)];
+            delete worldBlocks[blockKey(x, y, z)];
+            renderCullEngine();
         }
 
-        // --- PLAYER CONTROLS & PHYSICS ENGINE ---
+        // --- CELLULAR AUTOMATA FLUID WATER SPREAD SCRIPT ---
+        let fluidTicks = 0;
+        function processWaterFlow() {
+            let updates = [];
+            Object.keys(rawMapData).forEach(key => {
+                if (rawMapData[key] === 7) { // Identify source water voxels
+                    let parts = key.split(',').map(Number);
+                    let x = parts[0], y = parts[1], z = parts[2];
+
+                    let down = blockKey(x, y - 1, z);
+                    let left = blockKey(x - 1, y, z);
+                    let right = blockKey(x + 1, y, z);
+                    let forward = blockKey(x, y, z - 1);
+                    let back = blockKey(x, y, z + 1);
+
+                    // 1. Vertical expansion acceleration downward
+                    if (y > 0 && !rawMapData[down]) {
+                        updates.push({x, y: y-1, z, type: 7});
+                    } else {
+                        // 2. Horizontal surface dispersion spreading outward
+                        if (!rawMapData[left] && x > 0) updates.push({x: x-1, y, z, type: 7});
+                        if (!rawMapData[right] && x < WORLD_SIZE-1) updates.push({x: x+1, y, z, type: 7});
+                        if (!rawMapData[forward] && z > 0) updates.push({x, y, z: z-1, type: 7});
+                        if (!rawMapData[back] && z < WORLD_SIZE-1) updates.push({x, y, z: z+1, type: 7});
+                    }
+                }
+            });
+
+            if(updates.length > 0) {
+                updates.forEach(u => { rawMapData[blockKey(u.x, u.y, u.z)] = u.type; });
+                renderCullEngine();
+            }
+        }
+
+        // --- CONTROL LAYOUT CONFIG ---
         let player = {
-            pos: new THREE.Vector3(45, 16, 32), // Safe start coordinate inside plains landscape
+            pos: new THREE.Vector3(45, 15, 32),
             velocity: new THREE.Vector3(),
             width: 0.5,
             height: 1.8,
@@ -337,7 +374,7 @@
         let showHitboxes = false;
         document.addEventListener('keydown', (e) => {
             keys[e.code] = true;
-            if (['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7'].includes(e.code)) {
+            if (['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6'].includes(e.code)) {
                 selectedBlockType = inventory[parseInt(e.key) - 1];
                 drawHUD();
             }
@@ -363,7 +400,7 @@
                 for (let y = Math.floor(pMinY); y <= Math.floor(pMaxY); y++) {
                     for (let z = Math.floor(pMinZ); z <= Math.floor(pMaxZ); z++) {
                         let t = worldBlocks[blockKey(x, y, z)];
-                        if (t && t !== 7) return true; // Water doesn't solid collide
+                        if (t && t !== 7) return true; // Water doesn't stop solid movement vectors
                     }
                 }
             }
@@ -417,6 +454,7 @@
             });
         }
 
+        // --- MAIN RENDER GAME TICK ---
         function update(dt) {
             if (dt > 0.1) dt = 0.1;
 
@@ -426,9 +464,19 @@
                 sandTimer = 0;
             }
 
-            let inWater = worldBlocks[blockKey(Math.floor(player.pos.x), Math.floor(player.pos.y + 0.5), Math.floor(player.pos.z))] === 7;
-            player.velocity.y += inWater ? (GRAVITY * 0.25) * dt : GRAVITY * dt;
-            if(inWater && player.velocity.y < -2.5) player.velocity.y = -2.5;
+            fluidTicks += dt;
+            if (fluidTicks > 0.3) {
+                processWaterFlow();
+                fluidTicks = 0;
+            }
+
+            // Submerged / Swim checks
+            let insideBlock = worldBlocks[blockKey(Math.floor(player.pos.x), Math.floor(player.pos.y + 0.6), Math.floor(player.pos.z))];
+            let inWater = (insideBlock === 7);
+
+            // Water physics modifications
+            player.velocity.y += inWater ? (GRAVITY * 0.22) * dt : GRAVITY * dt;
+            if(inWater && player.velocity.y < -2.0) player.velocity.y = -2.0;
 
             let forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
             forward.y = 0; forward.normalize();
@@ -440,7 +488,7 @@
             if (keys['KeyS']) moveDirection.add(forward.clone().negate());
             if (keys['KeyD']) moveDirection.add(right);
             if (keys['KeyA']) moveDirection.add(right.clone().negate());
-            moveDirection.normalize().multiplyScalar(inWater ? SPEED * 0.5 : SPEED);
+            moveDirection.normalize().multiplyScalar(inWater ? SPEED * 0.45 : SPEED);
 
             player.pos.x += moveDirection.x * dt;
             if (checkCollision(player.pos)) player.pos.x -= moveDirection.x * dt;
@@ -458,7 +506,7 @@
 
             if (keys['Space']) {
                 if (player.onGround) { player.velocity.y = JUMP_FORCE; player.onGround = false; }
-                else if (inWater) { player.velocity.y = 2.5; }
+                else if (inWater) { player.velocity.y = 2.2; } // Rise up slowly while swimming
             }
 
             camera.position.copy(player.pos).y += player.height - 0.2;
