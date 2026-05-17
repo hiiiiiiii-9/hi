@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Textured Mini-Craft</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; user-select: none; }
+        canvas { display: block; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 10px; height: 10px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: ''; position: absolute; background: white; mix-blend-mode: difference;
+        }
+        #crosshair::before { top: 4px; left: 0; width: 10px; height: 2px; }
+        #crosshair::after { top: 0; left: 4px; width: 2px; height: 10px; }
+        #ui {
+            position: absolute; bottom: 20px; left: 50%;
+            transform: translateX(-50%); background: rgba(0,0,0,0.6);
+            padding: 10px; border-radius: 5px; display: flex; gap: 10px;
+            border: 2px solid #333;
+        }
+        .slot {
+            width: 50px; height: 50px; border: 3px solid #555;
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-size: 10px; font-weight: bold; text-align: center;
+            background: #222;
+        }
+        .slot.active { border-color: #fff; background: #444; }
+        #debug {
+            position: absolute; top: 10px; left: 10px;
+            color: white; background: rgba(0,0,0,0.7); padding: 10px;
+            font-family: monospace; font-size: 12px; pointer-events: none;
+            line-height: 1.5;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="crosshair"></div>
+    <div id="debug">Click screen to look around.<br>WASD: Move | Space: Jump<br>M: Place | N: Break<br>+: Toggle Hitboxes<br>1-6: Hotbar</div>
+    <div id="ui">
+        <div class="slot active" id="slot0">Grass<br>1</div>
+        <div class="slot" id="slot1">Dirt<br>2</div>
+        <div class="slot" id="slot2">Stone<br>3</div>
+        <div class="slot" id="slot3">Leaves<br>4</div>
+        <div class="slot" id="slot4">Wood<br>5</div>
+        <div class="slot" id="slot5">Sand<br>6</div>
+    </div>
+
+    <script>
+        // --- Game Setup ---
+        const WORLD_SIZE = 64;
+        const BLOCK_SIZE = 1;
+        const GRAVITY = -0.008;
+        const PLAYER_SPEED = 0.08;
+        const JUMP_FORCE = 0.16;
+
+        let selectedBlockType = 1;
+        let showHitboxes = false;
+        let worldData = {};
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x7ec0ee);
+        scene.fog = new THREE.FogExp2(0x7ec0ee, 0.04);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: false }); // Crisp pixel art look
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.4);
+        dirLight.position.set(10, 40, 15);
+        scene.add(dirLight);
+
+        // --- Player AABB Structure ---
+        const player = {
+            pos: new THREE.Vector3(32, 12, 32),
+            vel: new THREE.Vector3(),
+            width: 0.6, height: 1.8, depth: 0.6,
+            onGround: false
+        };
+        camera.position.copy(player.pos);
+
+        // --- Texture Atlas Mapping ---
+        // Using a public, unblocked Minecraft classic terrain sheet
+        const textureLoader = new THREE.TextureLoader();
+        const textureAtlas = textureLoader.load('https://classic.minecraft.net/assets/textures/terrain.png');
+        textureAtlas.magFilter = THREE.NearestFilter; // Keeps textures pixelated instead of blurry
+        textureAtlas.minFilter = THREE.NearestFilter;
+
+        // Grid coordinates on the classic 16x16 terrain sheet
+        const blockTileCoords = {
+            // format: [right, left, top, bottom, front, back]
+            1: [3, 3, 0, 2, 3, 3],       // Grass (Sides use tile 3, Top uses 0, Bottom uses 2)
+            2: [2, 2, 2, 2, 2, 2],       // Dirt
+            3: [1, 1, 1, 1, 1, 1],       // Stone
+            4: [22, 22, 22, 22, 22, 22], // Leaves
+            5: [20, 20, 21, 21, 20, 20], // Wood Log (Sides 20, Top/Bottom 21)
+            6: [18, 18, 18, 18, 18, 18]  // Sand
+        };
+
+        function getUVMappings(tileIndex) {
+            const tilesPerRow = 16;
+            const tileSize = 1 / tilesPerRow;
+            
+            const x = tileIndex % tilesPerRow;
+            const y = tilesPerRow - 1 - Math.floor(tileIndex / tilesPerRow);
+
+            const uvs = [
+                new THREE.Vector2(x * tileSize, y * tileSize),
+                new THREE.Vector2((x + 1) * tileSize, y * tileSize),
+                new THREE.Vector2((x + 1) * tileSize, (y + 1) * tileSize),
+                new THREE.Vector2(x * tileSize, (y + 1) * tileSize)
+            ];
+            return uvs;
+        }
+
+        // --- Block Generator ---
+        function createBlockMesh(type, x, y, z) {
+            const blockGeo = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            const mat = new THREE.MeshLambertMaterial({ map: textureAtlas });
+            
+            // Remap UV coordinates per face to look like real Minecraft
+            const uvs = blockGeo.attributes.uv;
+            const faces = blockTileCoords[type];
+
+            for (let i = 0; i < 6; i++) {
+                const faceUVs = getUVMappings(faces[i]);
+                uvs.setXY(i * 4 + 0, faceUVs[0].x, faceUVs[0].y);
+                uvs.setXY(i * 4 + 1, faceUVs[1].x, faceUVs[1].y);
+                uvs.setXY(i * 4 + 2, faceUVs[3].x, faceUVs[3].y);
+                uvs.setXY(i * 4 + 3, faceUVs[2].x, faceUVs[2].y);
+            }
+            uvs.needsUpdate = true;
+
+            const mesh = new THREE.Mesh(blockGeo, mat);
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+
+            const helper = new THREE.BoxHelper(mesh, 0xff0000);
+            helper.visible = showHitboxes;
+            scene.add(helper);
+
+            return { mesh, type, helper };
+        }
+
+        // --- Generate Map Layout ---
+        function getKey(x, y, z) { return `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`; }
+
+        for (let x = 0; x < WORLD_SIZE; x++) {
+            for (let z = 0; z < WORLD_SIZE; z++) {
+                let height = Math.floor(Math.sin(x * 0.08) * 3 + Math.cos(z * 0.08) * 3 + 5);
+                
+                for (let y = 0; y <= height; y++) {
+                    let type = 3; // Stone
+                    if (y === height) type = (height <= 3) ? 6 : 1; // Sand if low, Grass if high
+                    else if (y > height - 3) type = 2; // Dirt
+
+                    worldData[getKey(x, y, z)] = createBlockMesh(type, x, y, z);
+                }
+
+                // Grow occasional Trees on Grass
+                if (x % 9 === 0 && z % 9 === 0 && height > 3 && Math.random() > 0.4) {
+                    for (let h = 1; h <= 3; h++) worldData[getKey(x, height + h, z)] = createBlockMesh(5, x, height + h, z);
+                    // Tree Leaves
+                    worldData[getKey(x, height + 4, z)] = createBlockMesh(4, x, height + 4, z);
+                    worldData[getKey(x + 1, height + 3, z)] = createBlockMesh(4, x + 1, height + 3, z);
+                    worldData[getKey(x - 1, height + 3, z)] = createBlockMesh(4, x - 1, height + 3, z);
+                    worldData[getKey(x, height + 3, z + 1)] = createBlockMesh(4, x, height + 3, z + 1);
+                    worldData[getKey(x, height + 3, z - 1)] = createBlockMesh(4, x, height + 3, z - 1);
+                }
+            }
+        }
+
+        // --- Controls & Inputs ---
+        const keys = {};
+        let pitch = 0, yaw = 0;
+
+        document.body.addEventListener('click', () => { document.body.requestPointerLock(); });
+
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === document.body) {
+                yaw -= e.movementX * 0.0025;
+                pitch -= e.movementY * 0.0025;
+                pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, pitch));
+                camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+            if (['1','2','3','4','5','6'].includes(e.key)) {
+                selectedBlockType = parseInt(e.key);
+                document.querySelectorAll('.slot').forEach((s, idx) => {
+                    s.classList.toggle('active', idx === selectedBlockType - 1);
+                });
+            }
+            if (e.key === '+') {
+                showHitboxes = !showHitboxes;
+                Object.values(worldData).forEach(b => b.helper.visible = showHitboxes);
+            }
+            if (e.key.toLowerCase() === 'm') placeBlock();
+            if (e.key.toLowerCase() === 'n') breakBlock();
+        });
+        document.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+        // --- Break & Place Interaction ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(0, 0);
+
+        function getTargetBlock() {
+            raycaster.setFromCamera(mouse, camera);
+            const meshes = Object.values(worldData).map(b => b.mesh);
+            const intersects = raycaster.intersectObjects(meshes);
+            if (intersects.length > 0 && intersects[0].distance < 6) return intersects[0];
+            return null;
+        }
+
+        function breakBlock() {
+            const target = getTargetBlock();
+            if (target) {
+                const p = target.object.position;
+                const key = getKey(p.x, p.y, p.z);
+                scene.remove(target.object);
+                scene.remove(worldData[key].helper);
+                delete worldData[key];
+            }
+        }
+
+        function placeBlock() {
+            const target = getTargetBlock();
+            if (target) {
+                const n = target.face.normal;
+                const p = target.object.position;
+                const nX = Math.round(p.x + n.x);
+                const nY = Math.round(p.y + n.y);
+                const nZ = Math.round(p.z + n.z);
+                const key = getKey(nX, nY, nZ);
+                if (!worldData[key]) worldData[key] = createBlockMesh(selectedBlockType, nX, nY, nZ);
+            }
+        }
+
+        // --- Collision Loop Engine ---
+        function checkCollision(pos) {
+            const minX = pos.x - player.width / 2;
+            const maxX = pos.x + player.width / 2;
+            const minY = pos.y - player.height + 0.1;
+            const minZ = pos.z - player.depth / 2;
+            const maxZ = pos.z + player.depth / 2;
+
+            for (let x = Math.floor(minX); x <= Math.floor(maxX); x++) {
+                for (let y = Math.floor(minY); y <= Math.floor(player.pos.y + 0.1); y++) {
+                    for (let z = Math.floor(minZ); z <= Math.floor(maxZ); z++) {
+                        if (worldData[getKey(x, y, z)]) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // --- Frame Update Cycle ---
+        function update() {
+            // Sand Gravity physics
+            Object.keys(worldData).forEach(key => {
+                const block = worldData[key];
+                if (block && block.type === 6) { // Sand ID
+                    const p = block.mesh.position;
+                    const belowKey = getKey(p.x, p.y - 1, p.z);
+                    if (p.y > 0 && !worldData[belowKey]) {
+                        delete worldData[key];
+                        p.y -= 1;
+                        block.helper.update();
+                        worldData[getKey(p.x, p.y, p.z)] = block;
+                    }
+                }
+            });
+
+            // Player Horizontal Controls
+            const changeVector = new THREE.Vector3();
+            if (keys['w']) changeVector.z -= 1;
+            if (keys['s']) changeVector.z += 1;
+            if (keys['a']) changeVector.x -= 1;
+            if (keys['d']) changeVector.x += 1;
+            changeVector.normalize().multiplyScalar(PLAYER_SPEED).applyEuler(new THREE.Euler(0, yaw, 0));
+
+            // Player Vertical Gravity
+            player.vel.y += GRAVITY;
+            if (keys[' '] && player.onGround) {
+                player.vel.y = JUMP_FORCE;
+                player.onGround = false;
+            }
+
+            // Axis-Separated Axis Aligned Bounding Box resolutions
+            player.pos.x += changeVector.x;
+            if (checkCollision(player.pos)) player.pos.x -= changeVector.x;
+
+            player.pos.z += changeVector.z;
+            if (checkCollision(player.pos)) player.pos.z -= changeVector.z;
+
+            player.pos.y += player.vel.y;
+            player.onGround = false;
+            if (checkCollision(player.pos)) {
+                player.pos.y -= player.vel.y;
+                if (player.vel.y < 0) player.onGround = true;
+                player.vel.y = 0;
+            }
+
+            // Map Bounds Containment
+            player.pos.x = Math.max(0, Math.min(WORLD_SIZE - 1, player.pos.x));
+            player.pos.z = Math.max(0, Math.min(WORLD_SIZE - 1, player.pos.z));
+
+            camera.position.copy(player.pos);
+            renderer.render(scene, camera);
+            requestAnimationFrame(update);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>
