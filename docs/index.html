@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Web Craft</title>
+    <title>3D Web Craft - Precise Biomes</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: sans-serif; user-select: none; }
         canvas { display: block; }
@@ -25,7 +25,7 @@
         .slot {
             width: 50px; height: 50px; margin: 0 3px; border: 2px solid #555;
             display: flex; align-items: center; justify-content: center;
-            color: white; font-weight: bold; font-size: 12px; text-shadow: 1px 1px black; position: relative;
+            color: white; font-weight: bold; font-size: 11px; text-shadow: 1px 1px black; position: relative;
         }
         .slot.active { border-color: #fff; background: rgba(255,255,255,0.2); }
         .slot-num { position: absolute; top: 2px; left: 4px; font-size: 10px; }
@@ -57,10 +57,10 @@
     </div>
 
     <script>
-        // --- Game Configuration & Constants ---
+        // --- Game Configuration ---
         const WORLD_SIZE = 80;
-        const WORLD_DEPTH = 30;
-        const WATER_LEVEL = 8;
+        const WORLD_DEPTH = 25;
+        const WATER_LEVEL = 10;
         const BLOCK_SIZE = 1;
 
         const BLOCK_TYPES = {
@@ -77,12 +77,10 @@
             [BLOCK_TYPES.WATER]: 0x4060c0
         };
 
-        // Inventory Mapping
         const slotMapping = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.SAND, BLOCK_TYPES.WOOD, BLOCK_TYPES.LEAVES];
         let activeSlotIndex = 0;
 
-        // --- Procedural 3D World Array ---
-        // Flat 1D array optimization for performance on ThinkPads
+        // Flat data structure matrix optimization
         const world = new Uint8Array(WORLD_SIZE * WORLD_DEPTH * WORLD_SIZE);
         function getBlockIndex(x, y, z) {
             return x + y * WORLD_SIZE + z * WORLD_SIZE * WORLD_DEPTH;
@@ -97,54 +95,37 @@
             }
         }
 
-        // --- Simple Perlin-like Noise Generator ---
+        // Noise Profile
         function pseudoNoise2D(x, z) {
-            let n = Math.sin(x * 0.12 + z * 0.34) * 43758.5453123;
+            let n = Math.sin(x * 0.08 + z * 0.15) * 43758.5453123;
             return n - Math.floor(n);
         }
-        function smoothNoise(x, z) {
-            let total = 0;
-            let d = [
-                [0,0], [1,0], [-1,0], [0,1], [0,-1],
-                [1,1], [-1,1], [1,-1], [-1,-1]
-            ];
-            for(let i=0; i<d.length; i++) {
-                total += pseudoNoise2D(x + d[i][0], z + d[i][1]);
-            }
-            return total / d.length;
-        }
 
-        // --- Setup Three.js Scene ---
+        // --- Setup Three.js Context ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0xbfd1e5);
-        scene.fog = new THREE.FogExp2(0xbfd1e5, 0.025);
+        scene.fog = new THREE.FogExp2(0xbfd1e5, 0.03);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: false }); // False for better low-end performance
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xcccccc, 0.6);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
-        directionalLight.position.set(20, 40, 20);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight.position.set(30, 50, 10);
         scene.add(directionalLight);
 
-        // Materials cache
         const materials = {};
         function getMaterial(type, wireframe = false) {
             const key = `${type}_${wireframe}`;
             if (!materials[key]) {
                 let opacity = 1.0;
                 let transparent = false;
-                if (type === BLOCK_TYPES.LEAVES) {
-                    transparent = true; // Make leaves transparent on inside/edges
-                    opacity = 0.85;
-                } else if (type === BLOCK_TYPES.WATER) {
-                    transparent = true;
-                    opacity = 0.6;
-                }
+                if (type === BLOCK_TYPES.LEAVES) { transparent = true; opacity = 0.85; }
+                else if (type === BLOCK_TYPES.WATER) { transparent = true; opacity = 0.65; }
+                
                 materials[key] = new THREE.MeshLambertMaterial({
                     color: BLOCK_COLORS[type],
                     wireframe: wireframe,
@@ -156,51 +137,62 @@
             return materials[key];
         }
 
-        // --- World Generation Logic ---
+        // --- Layer Generation Logic ---
         function generateWorld() {
             for (let x = 0; x < WORLD_SIZE; x++) {
                 for (let z = 0; z < WORLD_SIZE; z++) {
-                    // Generate height profile
-                    let n = smoothNoise(x, z);
-                    let baseHeight = 6;
-                    let heightAmp = 8;
-                    let height = Math.floor(baseHeight + n * heightAmp);
+                    
+                    // Force the outer edges (ocean perimeter) to stay low and fill with water
+                    let isOceanEdge = (x < 6 || x > WORLD_SIZE - 7 || z < 6 || z > WORLD_SIZE - 7);
+                    
+                    let n = pseudoNoise2D(x, z);
+                    let isBeach = n > 0.65 || isOceanEdge; 
+                    
+                    // Fixed surface foundations
+                    let surfaceY = isBeach ? 9 : 12; 
+                    if (isOceanEdge) surfaceY = 6; // Drops the ocean bed down
 
-                    // Biome determination
-                    let isBeach = smoothNoise(x + 50, z + 50) > 0.6;
+                    // Random dirt variance for plains (2 or 3 blocks deep)
+                    let dirtDepth = Math.floor(2 + pseudoNoise2D(x * 5, z * 5) * 2);
+                    let stoneDepth = 5;
 
-                    for (let y = 0; y < WORLD_DEPTH; y++) {
-                        if (y <= height) {
-                            if (y === height) {
-                                if (isBeach || height <= WATER_LEVEL + 1) {
-                                    setBlock(x, y, z, BLOCK_TYPES.SAND);
-                                } else {
-                                    setBlock(x, y, z, BLOCK_TYPES.GRASS);
-                                }
-                            } else if (y > height - 3) {
-                                setBlock(x, y, z, isBeach ? BLOCK_TYPES.SAND : BLOCK_TYPES.DIRT);
-                            } else {
-                                setBlock(x, y, z, BLOCK_TYPES.STONE);
-                            }
-                        } else if (y <= WATER_LEVEL && getBlock(x, y, z) === BLOCK_TYPES.AIR) {
+                    // Build strictly downwards to the void
+                    let currentY = surfaceY;
+
+                    if (isBeach || isOceanEdge) {
+                        // Beach stack: 2 Sand -> 2 Dirt -> 5 Stone -> Void
+                        for (let i = 0; i < 2; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.SAND); }
+                        for (let i = 0; i < 2; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.DIRT); }
+                        for (let i = 0; i < stoneDepth; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.STONE); }
+                    } else {
+                        // Plains stack: 1 Grass -> 2-3 Dirt -> 5 Stone -> Void
+                        setBlock(x, currentY--, z, BLOCK_TYPES.GRASS);
+                        for (let i = 0; i < dirtDepth; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.DIRT); }
+                        for (let i = 0; i < stoneDepth; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.STONE); }
+                    }
+
+                    // Anything below the currentY counter stays empty (Void)
+
+                    // Ocean water flood layer
+                    for (let y = 0; y <= WATER_LEVEL; y++) {
+                        if (getBlock(x, y, z) === BLOCK_TYPES.AIR) {
                             setBlock(x, y, z, BLOCK_TYPES.WATER);
                         }
                     }
 
-                    // Procedural Trees on Plains
-                    if (!isBeach && height > WATER_LEVEL + 1 && Math.random() < 0.015) {
-                        generateTree(x, height + 1, z);
+                    // Trees spawn only on plains surfaces clear of water
+                    if (!isBeach && !isOceanEdge && Math.random() < 0.03) {
+                        generateTree(x, surfaceY + 1, z);
                     }
                 }
             }
         }
 
         function generateTree(tx, ty, tz) {
-            let trunkHeight = 4 + Math.floor(Math.random() * 2);
+            let trunkHeight = 4;
             for (let i = 0; i < trunkHeight; i++) {
                 setBlock(tx, ty + i, tz, BLOCK_TYPES.WOOD);
             }
-            // Leaves Cap
             let ly = ty + trunkHeight - 1;
             for (let ox = -2; ox <= 2; ox++) {
                 for (let oz = -2; oz <= 2; oz++) {
@@ -214,34 +206,28 @@
             }
         }
 
-        // --- Rendering Instanced Mesh for Top Tier Performance ---
+        // --- Fast Instanced Mesh Setup ---
         let showWireframe = false;
         let worldMeshGroup = new THREE.Group();
         scene.add(worldMeshGroup);
 
         function updateVisualWorld() {
-            // Clear existing geometry meshes efficiently
             while(worldMeshGroup.children.length > 0){
                 let obj = worldMeshGroup.children[0];
                 worldMeshGroup.remove(obj);
                 obj.geometry.dispose();
             }
 
-            // Group blocks by type for performance instancing
             const instancedData = {};
             for(let key in BLOCK_TYPES) {
-                if(BLOCK_TYPES[key] !== BLOCK_TYPES.AIR) {
-                    instancedData[BLOCK_TYPES[key]] = [];
-                }
+                if(BLOCK_TYPES[key] !== BLOCK_TYPES.AIR) instancedData[BLOCK_TYPES[key]] = [];
             }
 
-            // Cull hidden blocks (only render exposed faces)
             for (let x = 0; x < WORLD_SIZE; x++) {
                 for (let y = 0; y < WORLD_DEPTH; y++) {
                     for (let z = 0; z < WORLD_SIZE; z++) {
                         let type = getBlock(x, y, z);
                         if (type !== BLOCK_TYPES.AIR) {
-                            // Check if completely surrounded
                             let top = getBlock(x, y + 1, z);
                             let bottom = getBlock(x, y - 1, z);
                             let left = getBlock(x - 1, y, z);
@@ -249,12 +235,10 @@
                             let front = getBlock(x, y, z + 1);
                             let back = getBlock(x, y, z - 1);
 
-                            let isTransparent = (t) => t === BLOCK_TYPES.AIR || t === BLOCK_TYPES.WATER || t === BLOCK_TYPES.LEAVES;
+                            let trans = (t) => t === BLOCK_TYPES.AIR || t === BLOCK_TYPES.WATER || t === BLOCK_TYPES.LEAVES;
 
-                            if (isTransparent(top) || isTransparent(bottom) || isTransparent(left) || 
-                                isTransparent(right) || isTransparent(front) || isTransparent(back) || 
+                            if (trans(top) || trans(bottom) || trans(left) || trans(right) || trans(front) || trans(back) || 
                                 type === BLOCK_TYPES.WATER || type === BLOCK_TYPES.LEAVES) {
-                                
                                 instancedData[type].push(new THREE.Vector3(x, y, z));
                             }
                         }
@@ -262,7 +246,6 @@
                 }
             }
 
-            // Build Instanced Meshes
             const boxGeom = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
             for(let type in instancedData) {
                 let positions = instancedData[type];
@@ -281,27 +264,23 @@
             }
         }
 
-        // --- Liquid Water Flow Dynamics ---
+        // --- Water Fluid Physics Engine ---
         function simulationStep() {
             let changed = false;
-            // Create a temp list of liquid updates to prevent concurrent modification artifacts
-            let flowUpdates = [];
+            let updates = [];
 
             for (let x = 0; x < WORLD_SIZE; x++) {
                 for (let y = 1; y < WORLD_DEPTH; y++) {
                     for (let z = 0; z < WORLD_SIZE; z++) {
                         if (getBlock(x, y, z) === BLOCK_TYPES.WATER) {
-                            // Downward movement
                             if (getBlock(x, y - 1, z) === BLOCK_TYPES.AIR) {
-                                flowUpdates.push({x, y: y-1, z, type: BLOCK_TYPES.WATER});
+                                updates.push({x, y: y-1, z});
                                 changed = true;
-                            } 
-                            // Side distribution if base is solid
-                            else if (getBlock(x, y - 1, z) !== BLOCK_TYPES.WATER) {
+                            } else if (getBlock(x, y - 1, z) !== BLOCK_TYPES.WATER) {
                                 let sides = [[1,0], [-1,0], [0,1], [0,-1]];
                                 sides.forEach(([dx, dz]) => {
                                     if (getBlock(x + dx, y, z + dz) === BLOCK_TYPES.AIR) {
-                                        flowUpdates.push({x: x + dx, y, z: z + dz, type: BLOCK_TYPES.WATER});
+                                        updates.push({x: x + dx, y, z: z + dz});
                                         changed = true;
                                     }
                                 });
@@ -311,14 +290,14 @@
                 }
             }
 
-            flowUpdates.forEach(up => setBlock(up.x, up.y, up.z, up.type));
+            updates.forEach(up => setBlock(up.x, up.y, up.z, BLOCK_TYPES.WATER));
             if(changed) updateVisualWorld();
         }
-        setInterval(simulationStep, 250); // Fluid updates tick sequence
+        setInterval(simulationStep, 250);
 
-        // --- Player Physics, Logic & Controls ---
+        // --- Physics & Control Handling ---
         let player = {
-            pos: new THREE.Vector3(40, 15, 40),
+            pos: new THREE.Vector3(40, 16, 40),
             velocity: new THREE.Vector3(),
             speed: 0.12,
             gravity: 0.012,
@@ -329,37 +308,25 @@
         };
 
         camera.position.copy(player.pos);
-
         let keys = {};
+
         window.addEventListener('keydown', (e) => {
             keys[e.key.toLowerCase()] = true;
-            // Hotbar selection
             if(['1','2','3','4','5','6'].includes(e.key)) {
                 activeSlotIndex = parseInt(e.key) - 1;
                 document.querySelectorAll('.slot').forEach((s, idx) => {
                     s.classList.toggle('active', idx === activeSlotIndex);
                 });
             }
-            // Hitbox Toggles
-            if(e.key.toLowerCase() === 'h') {
-                showWireframe = !showWireframe;
-                updateVisualWorld();
-            }
-            // Block Interaction Hooks
+            if(e.key.toLowerCase() === 'h') { showWireframe = !showWireframe; updateVisualWorld(); }
             if(e.key.toLowerCase() === 'm') breakBlock();
             if(e.key.toLowerCase() === 'n') placeBlock();
         });
         window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
 
-        // Pointer Lock Control Rig
         let isLocked = false;
-        document.body.addEventListener('click', () => {
-            if(!isLocked) document.body.requestPointerLock();
-        });
-
-        document.addEventListener('pointerlockchange', () => {
-            isLocked = (document.pointerLockElement === document.body);
-        });
+        document.body.addEventListener('click', () => { if(!isLocked) document.body.requestPointerLock(); });
+        document.addEventListener('pointerlockchange', () => { isLocked = (document.pointerLockElement === document.body); });
 
         let pitch = 0, yaw = 0;
         window.addEventListener('mousemove', (e) => {
@@ -367,11 +334,9 @@
             yaw -= e.movementX * 0.0025;
             pitch -= e.movementY * 0.0025;
             pitch = Math.max(-Math.PI/2 + 0.01, Math.min(Math.PI/2 - 0.01, pitch));
-
             camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
         });
 
-        // --- Custom Precise AABB Collision Checking ---
         function checkCollision(pos) {
             let minX = Math.floor(pos.x - player.radius);
             let maxX = Math.floor(pos.x + player.radius);
@@ -384,22 +349,16 @@
                 for(let y = minY; y <= maxY; y++) {
                     for(let z = minZ; z <= maxZ; z++) {
                         let block = getBlock(x, y, z);
-                        if(block !== BLOCK_TYPES.AIR && block !== BLOCK_TYPES.WATER) {
-                            return true; // Collision detected
-                        }
+                        if(block !== BLOCK_TYPES.AIR && block !== BLOCK_TYPES.WATER) return true;
                     }
                 }
             }
             return false;
         }
 
-        // --- Raycast Engine for Targeted Interaction ---
         function getTargetBlock() {
             let raycaster = new THREE.Raycaster();
-            // Center screen mapping
             raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
-            
-            // Check crosshair intersects manually down vector line up to 5 units away
             let target = null;
             let minDist = 5;
 
@@ -417,19 +376,13 @@
                                 let d = camera.position.distanceTo(intersect);
                                 if (d < minDist) {
                                     minDist = d;
-                                    // Extract intersection normal to find placement vector surface
                                     let normal = new THREE.Vector3();
-                                    let center = new THREE.Vector3(x, y, z);
-                                    let diff = intersect.clone().sub(center);
-                                    if (Math.abs(diff.x) > Math.abs(diff.y) && Math.abs(diff.x) > Math.abs(diff.z)) {
-                                        normal.set(Math.sign(diff.x), 0, 0);
-                                    } else if (Math.abs(diff.y) > Math.abs(diff.x) && Math.abs(diff.y) > Math.abs(diff.z)) {
-                                        normal.set(0, Math.sign(diff.y), 0);
-                                    } else {
-                                        normal.set(0, 0, Math.sign(diff.z));
-                                    }
+                                    let diff = intersect.clone().sub(new THREE.Vector3(x, y, z));
+                                    if (Math.abs(diff.x) > Math.abs(diff.y) && Math.abs(diff.x) > Math.abs(diff.z)) normal.set(Math.sign(diff.x), 0, 0);
+                                    else if (Math.abs(diff.y) > Math.abs(diff.x) && Math.abs(diff.y) > Math.abs(diff.z)) normal.set(0, Math.sign(diff.y), 0);
+                                    else normal.set(0, 0, Math.sign(diff.z));
 
-                                    target = { coord: center, normal: normal };
+                                    target = { coord: new THREE.Vector3(x, y, z), normal: normal };
                                 }
                             }
                         }
@@ -447,26 +400,19 @@
             }
         }
 
+        style="color:red;"
         function placeBlock() {
             let target = getTargetBlock();
             if(target) {
                 let p = target.coord.clone().add(target.normal);
-                // Prevent placing block directly inside camera matrix
-                let playerFloorX = Math.floor(player.pos.x);
-                let playerFloorY = Math.floor(player.pos.y);
-                let playerFloorZ = Math.floor(player.pos.z);
-                
-                if(p.x === playerFloorX && p.z === playerFloorZ && (p.y === playerFloorY || p.y === playerFloorY - 1)) {
-                    return; 
-                }
+                if(p.x === Math.floor(player.pos.x) && p.z === Math.floor(player.pos.z) && 
+                   (p.y === Math.floor(player.pos.y) || p.y === Math.floor(player.pos.y) - 1)) return;
 
-                let chosenBlock = slotMapping[activeSlotIndex];
-                setBlock(p.x, p.y, p.z, chosenBlock);
+                setBlock(p.x, p.y, p.z, slotMapping[activeSlotIndex]);
                 updateVisualWorld();
             }
         }
 
-        // --- Core Physics Frame Update Loop ---
         function animate() {
             requestAnimationFrame(animate);
 
@@ -478,7 +424,6 @@
                 if (keys['d']) moveVector.x += 1;
                 moveVector.normalize();
 
-                // Align movement to looking vector direction
                 let camYaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
                 let forward = new THREE.Vector3(Math.sin(camYaw), 0, Math.cos(camYaw)).negate();
                 let right = new THREE.Vector3(-forward.z, 0, forward.x);
@@ -490,57 +435,48 @@
 
                 player.velocity.x = intentVelocity.x;
                 player.velocity.z = intentVelocity.z;
-
-                // Process Vertical Movement & Gravity
                 player.velocity.y -= player.gravity;
+
                 if (keys[' '] && player.onGround) {
                     player.velocity.y = player.jumpForce;
                     player.onGround = false;
                 }
 
-                // Apply collisions slide along axes independently
                 let nextPos = player.pos.clone();
-                
                 nextPos.x += player.velocity.x;
-                if (checkCollision(nextPos)) {
-                    nextPos.x -= player.velocity.x;
-                    player.velocity.x = 0;
-                }
+                if (checkCollision(nextPos)) { nextPos.x -= player.velocity.x; player.velocity.x = 0; }
 
                 nextPos.y += player.velocity.y;
                 if (checkCollision(nextPos)) {
                     if (player.velocity.y < 0) player.onGround = true;
                     nextPos.y -= player.velocity.y;
                     player.velocity.y = 0;
-                } else {
-                    player.onGround = false;
-                }
+                } else { player.onGround = false; }
 
                 nextPos.z += player.velocity.z;
-                if (checkCollision(nextPos)) {
-                    nextPos.z -= player.velocity.z;
-                    player.velocity.z = 0;
+                if (checkCollision(nextPos)) { nextPos.z -= player.velocity.z; player.velocity.z = 0; }
+
+                // Check for Void boundaries to prevent falling indefinitely
+                if(nextPos.y < -5) {
+                    nextPos.set(40, 16, 40); // Respawn back at center safely
+                    player.velocity.set(0,0,0);
                 }
 
                 player.pos.copy(nextPos);
                 camera.position.copy(player.pos);
             }
-
             renderer.render(scene, camera);
         }
 
-        // Window Resizing Handlers
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
-        // --- Engine Startup Initializations ---
         generateWorld();
         updateVisualWorld();
         animate();
-
     </script>
 </body>
 </html>
