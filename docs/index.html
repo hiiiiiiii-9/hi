@@ -1,27 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Textured Mini-Craft</title>
-    <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; user-select: none; }
-        canvas { display: block; }
-        #crosshair {
-            position: absolute; top: 50%; left: 50%;
-            width: 10px; height: 10px;
-            transform: translate(-50%, -50%);
-            pointer-events: none;
-        }
-        #crosshair::before, #crosshair::after {
-            content: ''; position: absolute; background: white; mix-blend-mode: difference;
-        }
-        #crosshair::before { top: 4px; left: 0; width: 10px; height: 2px; }
-        #crosshair::after { top: 0; left: 4px; width: 2px; height: 10px; }
-        #ui {
-            position: absolute; bottom: 20px; left: 50%;
-            transform: translateX(-50%); background: rgba(0,0,0,0.6);
-            padding: 10px; border-radius: 5px; display: flex; gap: 10px;
+dding: 10px; border-radius: 5px; display: flex; gap: 10px;
             border: 2px solid #333;
         }
         .slot {
@@ -331,4 +308,27 @@
         requestAnimationFrame(update);
     </script>
 </body>
-</html>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Textured Mini-Craft</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; user-select: none; }
+        canvas { display: block; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 10px; height: 10px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: ''; position: absolute; background: white; mix-blend-mode: difference;
+        }
+        #crosshair::before { top: 4px; left: 0; width: 10px; height: 2px; }
+        #crosshair::after { top: 0; left: 4px; width: 2px; height: 10px; }
+        #ui {
+            position: absolute; bottom: 20px; left: 50%;
+            transform: translateX(-50%); background: rgba(0,0,0,0.6);
+            pa
