@@ -3,173 +3,73 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Craft - Full Textures Enabled</title>
+    <title>3D Craft - Ultimate Iframe Fix</title>
     <style>
-        body {
+        html, body {
             margin: 0;
+            padding: 0;
             overflow: hidden;
+            width: 100%;
+            height: 100%;
             background-color: #78a7ff;
-            font-family: 'Courier New', Courier, monospace;
-            user-select: none;
         }
         canvas {
             display: block;
-        }
-        #crosshair {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 10px;
-            height: 10px;
-            transform: translate(-50%, -50%);
-            pointer-events: none;
-        }
-        #crosshair::before, #crosshair::after {
-            content: '';
-            position: absolute;
-            background: white;
-            mix-blend-mode: difference;
-        }
-        #crosshair::before { top: 4px; left: 0; width: 10px; height: 2px; }
-        #crosshair::after { top: 0; left: 4px; width: 2px; height: 10px; }
-        
-        #ui {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 5px;
-            background: rgba(0,0,0,0.6);
-            padding: 8px;
-            border-radius: 4px;
-            pointer-events: none;
-        }
-        .slot {
-            width: 55px;
-            height: 45px;
-            border: 2px solid #555;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-            font-size: 10px;
-            text-shadow: 1px 1px 0px #000;
-        }
-        .slot.active {
-            border-color: #fff;
-            background: rgba(255,255,255,0.2);
-        }
-        #instructions {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            background: rgba(0,0,0,0.7);
-            padding: 12px;
-            border-radius: 5px;
-            font-size: 12px;
-            pointer-events: none;
-            line-height: 1.4;
+            width: 100vw;
+            height: 100vh;
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-    <div id="crosshair"></div>
-    <div id="instructions">
-        <strong>CONTROLS:</strong><br>
-        • Click Screen: Focus Game / Lock Mouse<br>
-        • <em>If mouse doesn't lock, hold <strong>SHIFT</strong> to look around!</em><br>
-        • WASD: Move | Space: Jump<br>
-        • M: Place Block | N: Break Block<br>
-        • 1 - 6: Select Hotbar Slot<br>
-        • H: Toggle Hitboxes & Wireframes<br>
-        • ESC: Free Mouse Cursor
-    </div>
-
-    <div id="ui">
-        <div class="slot active" id="slot0" style="background-color: #557a2b;">Grass</div>
-        <div class="slot" id="slot1" style="background-color: #866043;">Dirt</div>
-        <div class="slot" id="slot2" style="background-color: #737373;">Stone</div>
-        <div class="slot" id="slot3" style="background-color: #378221;">Leaves</div>
-        <div class="slot" id="slot4" style="background-color: #9c774c;">Wood</div>
-        <div class="slot" id="slot5" style="background-color: #e3cb8c; color: #333;">Sand</div>
-    </div>
-
     <script>
         const WORLD_SIZE = 64;
         const BLOCK_SIZE = 1;
         
         const BLOCK_TYPES = {
-            1: { name: 'Grass', color: 0x557a2b, noise: 0.15 },
-            2: { name: 'Dirt', color: 0x866043, noise: 0.15 },
-            3: { name: 'Stone', color: 0x737373, noise: 0.20 },
-            4: { name: 'Leaves', color: 0x378221, noise: 0.30 },
-            5: { name: 'Wood', color: 0x9c774c, noise: 0.15 },
-            6: { name: 'Sand', color: 0xe3cb8c, noise: 0.10 }
+            1: { name: 'Grass', color: '#557a2b', hex: 0x557a2b },
+            2: { name: 'Dirt', color: '#866043', hex: 0x866043 },
+            3: { name: 'Stone', color: '#737373', hex: 0x737373 },
+            4: { name: 'Leaves', color: '#378221', hex: 0x378221 },
+            5: { name: 'Wood', color: '#9c774c', hex: 0x9c774c },
+            6: { name: 'Sand', color: '#e3cb8c', hex: 0xe3cb8c }
         };
 
         let selectedBlockType = 1; 
         const inventory = [1, 2, 3, 4, 5, 6];
 
-        // --- RETRO 16x16 MINECRAFT TEXTURE GENERATOR ---
-        function createMinecraftTexture(id) {
-            const canvas = document.createElement('canvas');
-            canvas.width = 16;
-            canvas.height = 16;
-            const ctx = canvas.getContext('2d');
+        // --- 100% RELIABLE TEXTURE GENERATOR ---
+        // Generates procedural pixel noise grids directly converted into data arrays
+        function createFallbackTexture(id) {
+            const size = 16;
+            const data = new Uint8Array(size * size * 3);
+            const baseColor = new THREE.Color(BLOCK_TYPES[id].hex);
             
-            const config = BLOCK_TYPES[id];
-            const baseColor = new THREE.Color(config.color);
-            
-            for (let x = 0; x < 16; x++) {
-                for (let y = 0; y < 16; y++) {
-                    let currentNoise = (Math.random() - 0.5) * config.noise;
-                    let c = baseColor.clone().addScalar(currentNoise);
-                    
-                    // Specific stylistic patterns for specific blocks
-                    if (id == 1 && y < 4) { 
-                        // Grass top layer behavior
-                        let grassNoise = (Math.random() - 0.5) * 0.1;
-                        c = new THREE.Color(0x557a2b).addScalar(grassNoise);
-                    } else if (id == 1 && y >= 4 && y < 6 && Math.random() > 0.5) {
-                        // Grass hanging dirt fringe pattern
-                        let grassNoise = (Math.random() - 0.5) * 0.1;
-                        c = new THREE.Color(0x557a2b).addScalar(grassNoise);
-                    } else if (id == 5) {
-                        // Wood rings / plank line simulation
-                        if (x === 0 || x === 15 || y === 4 || y === 11) {
-                            c.multiplyScalar(0.7); // Dark wood rings
-                        }
-                    } else if (id == 4) {
-                        // Leaves transparency simulation patterns
-                        if (Math.random() > 0.85) {
-                            ctx.fillStyle = 'rgba(0,0,0,0)'; // Leaf gaps
-                            continue;
-                        }
-                    }
-
-                    ctx.fillStyle = `rgb(${Math.floor(c.r * 255)}, ${Math.floor(c.g * 255)}, ${Math.floor(c.b * 255)})`;
-                    ctx.fillRect(x, y, 1, 1);
-                    
-                    // Darken borders slightly to create clean separation lines between grid blocks
-                    if(x === 0 || y === 0 || x === 15 || y === 15) {
-                        ctx.fillStyle = `rgba(0,0,0,0.08)`;
-                        ctx.fillRect(x, y, 1, 1);
-                    }
+            for (let i = 0; i < size * size; i++) {
+                const x = i % size;
+                const y = Math.floor(i / size);
+                
+                let noise = (Math.random() - 0.5) * 0.2;
+                let c = baseColor.clone().addScalar(noise);
+                
+                // Block type unique texturing patterns
+                if (id === 1 && y < 4) {
+                    c = new THREE.Color(0x557a2b).addScalar((Math.random() - 0.5) * 0.1);
+                } else if (id === 5 && (x === 0 || x === 15 || y === 4 || y === 11)) {
+                    c.multiplyScalar(0.6); 
                 }
+
+                const stride = i * 3;
+                data[stride]     = Math.floor(c.r * 255);
+                data[stride + 1] = Math.floor(c.g * 255);
+                data[stride + 2] = Math.floor(c.b * 255);
             }
             
-            const texture = new THREE.CanvasTexture(canvas);
-            // Crucial: NearestFilter stops the graphics engine from blurring textures, keeping them sharp and pixelated
+            const texture = new THREE.DataTexture(data, size, size, THREE.RGBFormat);
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
-            texture.wrapS = THREE.RepeatWrapping;
-            texture.wrapT = THREE.RepeatWrapping;
+            texture.needsUpdate = true;
             return texture;
         }
 
@@ -183,9 +83,9 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
         scene.add(ambientLight);
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.55);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
         directionalLight.position.set(20, 40, 20);
         scene.add(directionalLight);
 
@@ -196,18 +96,81 @@
         const materials = {};
         const wireframeMaterials = {};
         
-        // Cache our custom procedural textures
         Object.keys(BLOCK_TYPES).forEach(id => {
-            const texture = createMinecraftTexture(id);
-            materials[id] = new THREE.MeshLambertMaterial({ 
-                map: texture,
-                transparent: id == 4 ? true : false, // Enable transparency for leaves
-                side: THREE.DoubleSide
-            });
-            wireframeMaterials[id] = new THREE.MeshBasicMaterial({ color: BLOCK_TYPES[id].color, wireframe: true });
+            materials[id] = new THREE.MeshLambertMaterial({ map: createFallbackTexture(parseInt(id)) });
+            wireframeMaterials[id] = new THREE.MeshBasicMaterial({ color: BLOCK_TYPES[id].hex, wireframe: true });
         });
 
         const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+
+        // --- CANVAS-BASED 2D HUD (Rendered within WebGL directly) ---
+        const hudCanvas = document.createElement('canvas');
+        hudCanvas.width = 1024;
+        hudCanvas.height = 1024;
+        const hudCtx = hudCanvas.getContext('2d');
+        
+        const hudTexture = new THREE.CanvasTexture(hudCanvas);
+        const hudMaterial = new THREE.SpriteMaterial({ map: hudTexture });
+        const hudSprite = new THREE.Sprite(hudMaterial);
+        
+        // Lock to screen camera space
+        const hudCamera = new THREE.OrthographicCamera(-512, 512, 512, -512, 1, 10);
+        hudSprite.position.set(0, 0, -1);
+        hudSprite.scale.set(1024, 1024, 1);
+        const hudScene = new THREE.Scene();
+        hudScene.add(hudSprite);
+
+        function drawHUD() {
+            hudCtx.clearRect(0, 0, 1024, 1024);
+            
+            // 1. Crosshair
+            hudCtx.strokeStyle = 'white';
+            hudCtx.lineWidth = 4;
+            hudCtx.beginPath();
+            hudCtx.moveTo(512 - 15, 512); hudCtx.lineTo(512 + 15, 512);
+            hudCtx.moveTo(512, 512 - 15); hudCtx.lineTo(512, 512 + 15);
+            hudCtx.stroke();
+
+            // 2. Button Guide Box
+            hudCtx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+            hudCtx.fillRect(20, 20, 420, 240);
+            hudCtx.fillStyle = 'white';
+            hudCtx.font = 'bold 20px Courier New';
+            hudCtx.fillText("CONTROLS (github.dev Native Fix):", 30, 50);
+            hudCtx.font = '18px Courier New';
+            hudCtx.fillText("• Click Screen : Focus Game Frame", 30, 85);
+            hudCtx.fillText("• Hold SHIFT   : Mouse Look Fallback", 30, 115);
+            hudCtx.fillText("• WASD / SPACE : Move and Jump", 30, 145);
+            hudCtx.fillText("• M / N        : Place / Break Block", 30, 175);
+            hudCtx.fillText("• 1 to 6       : Switch Slots", 30, 205);
+            hudCtx.fillText("• H            : Wireframe Hitboxes", 30, 235);
+
+            // 3. Hotbar Selector Rendering
+            let startX = 512 - (6 * 65) / 2;
+            for (let i = 0; i < 6; i++) {
+                let x = startX + (i * 65);
+                let y = 930;
+                let bId = inventory[i];
+
+                // Check active status outline
+                hudCtx.fillStyle = (bId === selectedBlockType) ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.6)';
+                hudCtx.fillRect(x, y, 60, 60);
+                hudCtx.strokeStyle = (bId === selectedBlockType) ? '#ffffff' : '#555555';
+                hudCtx.lineWidth = (bId === selectedBlockType) ? 4 : 2;
+                hudCtx.strokeRect(x, y, 60, 60);
+
+                // Inline color icon badge
+                hudCtx.fillStyle = BLOCK_TYPES[bId].color;
+                hudCtx.fillRect(x + 5, y + 5, 20, 20);
+
+                // Slot text tag
+                hudCtx.fillStyle = 'white';
+                hudCtx.font = '14px Courier New';
+                hudCtx.fillText(BLOCK_TYPES[bId].name, x + 5, y + 48);
+                hudCtx.fillText(i + 1, x + 45, y + 20);
+            }
+            hudTexture.needsUpdate = true;
+        }
 
         // --- WORLD GENERATION ---
         function generateWorld() {
@@ -219,19 +182,19 @@
                     for (let y = 0; y <= height; y++) {
                         let type = 3; // Stone
                         if (y === height) {
-                            type = (y < 6) ? 6 : 1; // Beach Sand or Grass Bed
+                            type = (y < 6) ? 6 : 1; // Sand or Grass Bed
                         } else if (y > height - 3) {
                             type = 2; // Dirt core
                         }
                         spawnBlock(x, y, z, type);
                     }
 
-                    // Tree Spawner
+                    // Trees
                     if (x > 2 && x < WORLD_SIZE - 3 && z > 2 && z < WORLD_SIZE - 3 && Math.random() < 0.02) {
                         if(worldBlocks[blockKey(x, height, z)] === 1) {
                             let trunkHeight = 4 + Math.floor(Math.random() * 2);
                             for(let th = 1; th <= trunkHeight; th++) {
-                                spawnBlock(x, height + th, z, 5); // Wood log
+                                spawnBlock(x, height + th, z, 5);
                             }
                             let leafBase = height + trunkHeight - 1;
                             for(let lx = -2; lx <= 2; lx++) {
@@ -240,7 +203,7 @@
                                         if(Math.abs(lx) === 2 && Math.abs(lz) === 2 && ly > 1) continue;
                                         if(lx === 0 && lz === 0 && ly < 2) continue;
                                         let bKey = blockKey(x + lx, leafBase + ly, z + lz);
-                                        if(!worldBlocks[bKey]) spawnBlock(x + lx, leafBase + ly, z + lz, 4); // Leaves
+                                        if(!worldBlocks[bKey]) spawnBlock(x + lx, leafBase + ly, z + lz, 4);
                                     }
                                 }
                             }
@@ -274,7 +237,7 @@
 
         generateWorld();
 
-        // --- PLAYER & PHYSICS CONFIG ---
+        // --- PLAYER & PHYSICS ---
         let player = {
             pos: new THREE.Vector3(32, 18, 32),
             velocity: new THREE.Vector3(),
@@ -292,21 +255,19 @@
         let keys = {};
         let isLocked = false;
 
-        // Force focus to iframe container window
+        // Forced frame focus grabbers
         window.addEventListener('click', () => {
             window.focus();
             document.body.requestPointerLock();
         });
-
         document.addEventListener('pointerlockchange', () => {
             isLocked = document.pointerLockElement === document.body;
         });
 
-        // Looking logic + IFrame fallback mechanics
+        // Trackball look angles
         let pitch = 0, yaw = 0;
         document.addEventListener('mousemove', (e) => {
             if (!isLocked && !keys['ShiftLeft'] && !keys['ShiftRight']) return;
-            
             yaw -= e.movementX * 0.003;
             pitch -= e.movementY * 0.003;
             pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, pitch));
@@ -318,9 +279,7 @@
             if (['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6'].includes(e.code)) {
                 let index = parseInt(e.key) - 1;
                 selectedBlockType = inventory[index];
-                document.querySelectorAll('.slot').forEach((s, idx) => {
-                    s.classList.toggle('active', idx === index);
-                });
+                drawHUD();
             }
             if (e.code === 'KeyH') {
                 showHitboxes = !showHitboxes;
@@ -335,7 +294,6 @@
 
         document.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-        // Collision Framework Check
         function checkCollision(pos) {
             let pMinX = pos.x - player.width / 2;
             let pMaxX = pos.x + player.width / 2;
@@ -354,7 +312,6 @@
             return false;
         }
 
-        // Raycast Target Selection
         const raycaster = new THREE.Raycaster();
         const centerMouse = new THREE.Vector2(0, 0);
 
@@ -386,7 +343,6 @@
             }
         }
 
-        // Sand Gravity Physics Clock
         let sandTimer = 0;
         function updateSandGravity() {
             Object.keys(worldBlocks).forEach(key => {
@@ -395,13 +351,13 @@
                     let x = parts[0], y = parts[1], z = parts[2];
                     if (y > 0 && !worldBlocks[blockKey(x, y - 1, z)]) {
                         removeBlock(x, y, z);
-                        spawnBlock(x, y - 1, z, 6); // Relocate sand downward
+                        spawnBlock(x, y - 1, z, 6);
                     }
                 }
             });
         }
 
-        // Main Loop
+        // --- TICK EXECUTION ---
         function update(dt) {
             if (dt > 0.1) dt = 0.1;
 
@@ -425,15 +381,12 @@
             if (keys['KeyA']) moveDirection.add(right.clone().negate());
             moveDirection.normalize().multiplyScalar(SPEED);
 
-            // X Movement Check
             player.pos.x += moveDirection.x * dt;
             if (checkCollision(player.pos)) player.pos.x -= moveDirection.x * dt;
 
-            // Z Movement Check
             player.pos.z += moveDirection.z * dt;
             if (checkCollision(player.pos)) player.pos.z -= moveDirection.z * dt;
 
-            // Y Movement/Gravity Check
             player.pos.y += player.velocity.y * dt;
             player.onGround = false;
             if (checkCollision(player.pos)) {
@@ -451,10 +404,20 @@
             camera.position.y += player.height - 0.2;
         }
 
+        // Initialize HUD Graphic Layer first
+        drawHUD();
+
         function animate() {
             requestAnimationFrame(animate);
             update(clock.getDelta());
+            
+            // Render 3D World Space
+            renderer.clear();
             renderer.render(scene, camera);
+            
+            // Overlay HUD layer
+            renderer.clearDepth();
+            renderer.render(hudScene, hudCamera);
         }
 
         window.addEventListener('resize', () => {
@@ -463,6 +426,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
+        renderer.autoClear = false;
         animate();
     </script>
 </body>
