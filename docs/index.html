@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Web Craft - Precise Biomes</title>
+    <title>3D Web Craft - Advanced Physics</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: sans-serif; user-select: none; }
         canvas { display: block; }
@@ -33,15 +33,21 @@
             position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7);
             color: white; padding: 10px; border-radius: 5px; font-size: 12px; line-height: 1.4;
         }
+        /* Underwater screen overlay */
+        #underwater-tint {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0, 60, 200, 0.35); pointer-events: none; display: none;
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
+    <div id="underwater-tint"></div>
     <div id="crosshair"></div>
     <div id="instructions">
         <strong>Click screen to Lock Mouse</strong><br>
-        WASD = Move | Space = Jump<br>
+        WASD = Move | Space = Jump / Swim Up<br>
         N = Place Block | M = Break Block<br>
         1-6 = Inventory Slots<br>
         H = Toggle Hitboxes/Wireframe<br>
@@ -80,7 +86,7 @@
         const slotMapping = [BLOCK_TYPES.GRASS, BLOCK_TYPES.DIRT, BLOCK_TYPES.STONE, BLOCK_TYPES.SAND, BLOCK_TYPES.WOOD, BLOCK_TYPES.LEAVES];
         let activeSlotIndex = 0;
 
-        // Flat data structure matrix optimization
+        // Flat performance architecture array
         const world = new Uint8Array(WORLD_SIZE * WORLD_DEPTH * WORLD_SIZE);
         function getBlockIndex(x, y, z) {
             return x + y * WORLD_SIZE + z * WORLD_SIZE * WORLD_DEPTH;
@@ -95,16 +101,11 @@
             }
         }
 
-        // Noise Profile
-        function pseudoNoise2D(x, z) {
-            let n = Math.sin(x * 0.08 + z * 0.15) * 43758.5453123;
-            return n - Math.floor(n);
-        }
-
         // --- Setup Three.js Context ---
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xbfd1e5);
-        scene.fog = new THREE.FogExp2(0xbfd1e5, 0.03);
+        const skyColor = 0xbfd1e5;
+        scene.background = new THREE.Color(skyColor);
+        scene.fog = new THREE.FogExp2(skyColor, 0.03);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -137,51 +138,52 @@
             return materials[key];
         }
 
-        // --- Layer Generation Logic ---
+        // --- Clean Biome Generation (No Wild Mixing) ---
         function generateWorld() {
+            // Split map into unified, large regions: x < 35 is deep water/beach, x >= 35 is plains inland
             for (let x = 0; x < WORLD_SIZE; x++) {
                 for (let z = 0; z < WORLD_SIZE; z++) {
                     
-                    // Force the outer edges (ocean perimeter) to stay low and fill with water
                     let isOceanEdge = (x < 6 || x > WORLD_SIZE - 7 || z < 6 || z > WORLD_SIZE - 7);
+                    let isBeach = (x < 35) || isOceanEdge;
                     
-                    let n = pseudoNoise2D(x, z);
-                    let isBeach = n > 0.65 || isOceanEdge; 
-                    
-                    // Fixed surface foundations
-                    let surfaceY = isBeach ? 9 : 12; 
-                    if (isOceanEdge) surfaceY = 6; // Drops the ocean bed down
+                    // Flatten center of map completely for player spawn point
+                    let isSpawnZone = (x > 36 && x < 44 && z > 36 && z < 44);
 
-                    // Random dirt variance for plains (2 or 3 blocks deep)
-                    let dirtDepth = Math.floor(2 + pseudoNoise2D(x * 5, z * 5) * 2);
-                    let stoneDepth = 5;
-
-                    // Build strictly downwards to the void
-                    let currentY = surfaceY;
-
-                    if (isBeach || isOceanEdge) {
-                        // Beach stack: 2 Sand -> 2 Dirt -> 5 Stone -> Void
-                        for (let i = 0; i < 2; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.SAND); }
-                        for (let i = 0; i < 2; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.DIRT); }
-                        for (let i = 0; i < stoneDepth; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.STONE); }
-                    } else {
-                        // Plains stack: 1 Grass -> 2-3 Dirt -> 5 Stone -> Void
-                        setBlock(x, currentY--, z, BLOCK_TYPES.GRASS);
-                        for (let i = 0; i < dirtDepth; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.DIRT); }
-                        for (let i = 0; i < stoneDepth; i++) { setBlock(x, currentY--, z, BLOCK_TYPES.STONE); }
+                    let surfaceY = 12; // Flat plains base height
+                    if (isSpawnZone) {
+                        surfaceY = 12; // Flat ground baseline
+                    } else if (isOceanEdge) {
+                        surfaceY = 6;  // Deep marine shelf
+                    } else if (isBeach) {
+                        surfaceY = 9;  // Lower beach shelf
                     }
 
-                    // Anything below the currentY counter stays empty (Void)
+                    let dirtDepth = 3;
+                    let stoneDepth = 5;
+                    let currentY = surfaceY;
 
-                    // Ocean water flood layer
+                    if (isBeach) {
+                        // Beach stack: 2 Sand -> 2 Dirt -> 5 Stone -> Void
+                        for (let i = 0; i < 2; i++) setBlock(x, currentY--, z, BLOCK_TYPES.SAND);
+                        for (let i = 0; i < 2; i++) setBlock(x, currentY--, z, BLOCK_TYPES.DIRT);
+                        for (let i = 0; i < stoneDepth; i++) setBlock(x, currentY--, z, BLOCK_TYPES.STONE);
+                    } else {
+                        // Plains stack: 1 Grass -> 3 Dirt -> 5 Stone -> Void
+                        setBlock(x, currentY--, z, BLOCK_TYPES.GRASS);
+                        for (let i = 0; i < dirtDepth; i++) setBlock(x, currentY--, z, BLOCK_TYPES.DIRT);
+                        for (let i = 0; i < stoneDepth; i++) setBlock(x, currentY--, z, BLOCK_TYPES.STONE);
+                    }
+
+                    // Fill water up to baseline
                     for (let y = 0; y <= WATER_LEVEL; y++) {
                         if (getBlock(x, y, z) === BLOCK_TYPES.AIR) {
                             setBlock(x, y, z, BLOCK_TYPES.WATER);
                         }
                     }
 
-                    // Trees spawn only on plains surfaces clear of water
-                    if (!isBeach && !isOceanEdge && Math.random() < 0.03) {
+                    // Trees only on dry plains outside the flat spawn zone
+                    if (!isBeach && !isSpawnZone && Math.random() < 0.04) {
                         generateTree(x, surfaceY + 1, z);
                     }
                 }
@@ -190,9 +192,7 @@
 
         function generateTree(tx, ty, tz) {
             let trunkHeight = 4;
-            for (let i = 0; i < trunkHeight; i++) {
-                setBlock(tx, ty + i, tz, BLOCK_TYPES.WOOD);
-            }
+            for (let i = 0; i < trunkHeight; i++) setBlock(tx, ty + i, tz, BLOCK_TYPES.WOOD);
             let ly = ty + trunkHeight - 1;
             for (let ox = -2; ox <= 2; ox++) {
                 for (let oz = -2; oz <= 2; oz++) {
@@ -206,7 +206,7 @@
             }
         }
 
-        // --- Fast Instanced Mesh Setup ---
+        // --- Fast Instanced Mesh Engine ---
         let showWireframe = false;
         let worldMeshGroup = new THREE.Group();
         scene.add(worldMeshGroup);
@@ -264,23 +264,41 @@
             }
         }
 
-        // --- Water Fluid Physics Engine ---
+        // --- Sand Gravity & Water Flow Engine ---
         function simulationStep() {
             let changed = false;
-            let updates = [];
 
+            // 1. Process Sand Block Gravity (Scan from bottom up to execute clean falls)
+            for (let y = 1; y < WORLD_DEPTH; y++) {
+                for (let x = 0; x < WORLD_SIZE; x++) {
+                    for (let z = 0; z < WORLD_SIZE; z++) {
+                        if (getBlock(x, y, z) === BLOCK_TYPES.SAND) {
+                            let blockBelow = getBlock(x, y - 1, z);
+                            // Sand falls through both air and water layers
+                            if (blockBelow === BLOCK_TYPES.AIR || blockBelow === BLOCK_TYPES.WATER) {
+                                setBlock(x, y - 1, z, BLOCK_TYPES.SAND);
+                                setBlock(x, y, z, blockBelow); // Displaces space cleanly
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Process Water Flow
+            let waterUpdates = [];
             for (let x = 0; x < WORLD_SIZE; x++) {
                 for (let y = 1; y < WORLD_DEPTH; y++) {
                     for (let z = 0; z < WORLD_SIZE; z++) {
                         if (getBlock(x, y, z) === BLOCK_TYPES.WATER) {
                             if (getBlock(x, y - 1, z) === BLOCK_TYPES.AIR) {
-                                updates.push({x, y: y-1, z});
+                                waterUpdates.push({x, y: y-1, z});
                                 changed = true;
                             } else if (getBlock(x, y - 1, z) !== BLOCK_TYPES.WATER) {
                                 let sides = [[1,0], [-1,0], [0,1], [0,-1]];
                                 sides.forEach(([dx, dz]) => {
                                     if (getBlock(x + dx, y, z + dz) === BLOCK_TYPES.AIR) {
-                                        updates.push({x: x + dx, y, z: z + dz});
+                                        waterUpdates.push({x: x + dx, y, z: z + dz});
                                         changed = true;
                                     }
                                 });
@@ -289,22 +307,26 @@
                     }
                 }
             }
+            waterUpdates.forEach(up => setBlock(up.x, up.y, up.z, BLOCK_TYPES.WATER));
 
-            updates.forEach(up => setBlock(up.x, up.y, up.z, BLOCK_TYPES.WATER));
             if(changed) updateVisualWorld();
         }
-        setInterval(simulationStep, 250);
+        setInterval(simulationStep, 200);
 
-        // --- Physics & Control Handling ---
+        // --- Player Attributes & Movement State ---
         let player = {
-            pos: new THREE.Vector3(40, 16, 40),
+            pos: new THREE.Vector3(40, 15, 40), // Spawns right above the flat ground marker
             velocity: new THREE.Vector3(),
-            speed: 0.12,
+            walkSpeed: 0.10,
+            swimSpeed: 0.05,
             gravity: 0.012,
-            jumpForce: 0.22,
+            waterGravity: 0.003, // Slower sinking when floating inside water volume
+            jumpForce: 0.20,
+            swimUpForce: 0.08,
             height: 1.6,
             radius: 0.3,
-            onGround: false
+            onGround: false,
+            isSubmerged: false
         };
 
         camera.position.copy(player.pos);
@@ -337,6 +359,7 @@
             camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
         });
 
+        // --- Custom AABB Solid Collision System ---
         function checkCollision(pos) {
             let minX = Math.floor(pos.x - player.radius);
             let maxX = Math.floor(pos.x + player.radius);
@@ -349,6 +372,7 @@
                 for(let y = minY; y <= maxY; y++) {
                     for(let z = minZ; z <= maxZ; z++) {
                         let block = getBlock(x, y, z);
+                        // Player collides with solid blocks (Not Air and Not Water)
                         if(block !== BLOCK_TYPES.AIR && block !== BLOCK_TYPES.WATER) return true;
                     }
                 }
@@ -400,7 +424,6 @@
             }
         }
 
-        style="color:red;"
         function placeBlock() {
             let target = getTargetBlock();
             if(target) {
@@ -413,10 +436,31 @@
             }
         }
 
+        // --- Core Loop with Dual Mechanics (Walking/Swimming) ---
         function animate() {
             requestAnimationFrame(animate);
 
             if (isLocked) {
+                // Check if current camera head position is underneath the water matrix height
+                let headBlock = getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y), Math.floor(player.pos.z));
+                let bodyBlock = getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y - 1), Math.floor(player.pos.z));
+                
+                let inWater = (headBlock === BLOCK_TYPES.WATER || bodyBlock === BLOCK_TYPES.WATER);
+                player.isSubmerged = (headBlock === BLOCK_TYPES.WATER);
+
+                // UI Fog and tint modulation depending on position
+                if(player.isSubmerged) {
+                    document.getElementById('underwater-tint').style.display = 'block';
+                    scene.fog.color.setHex(0x103080);
+                    scene.fog.density = 0.08;
+                } else {
+                    document.getElementById('underwater-tint').style.display = 'none';
+                    scene.fog.color.setHex(skyColor);
+                    scene.fog.density = 0.03;
+                }
+
+                let currentSpeed = inWater ? player.swimSpeed : player.walkSpeed;
+
                 let moveVector = new THREE.Vector3();
                 if (keys['w']) moveVector.z -= 1;
                 if (keys['s']) moveVector.z += 1;
@@ -431,17 +475,31 @@
                 let intentVelocity = new THREE.Vector3()
                     .addScaledVector(forward, -moveVector.z)
                     .addScaledVector(right, moveVector.x)
-                    .setLength(player.speed);
+                    .setLength(currentSpeed);
 
                 player.velocity.x = intentVelocity.x;
                 player.velocity.z = intentVelocity.z;
-                player.velocity.y -= player.gravity;
 
-                if (keys[' '] && player.onGround) {
-                    player.velocity.y = player.jumpForce;
-                    player.onGround = false;
+                // Vertical Fluid Dampening Logic
+                if (inWater) {
+                    player.velocity.y -= player.waterGravity;
+                    // Clamp maximum downward sink speed
+                    if(player.velocity.y < -0.04) player.velocity.y = -0.04;
+
+                    // Spacebar executes an upward swimming thrust
+                    if (keys[' ']) {
+                        player.velocity.y = player.swimUpForce;
+                    }
+                } else {
+                    // Regular Land Gravity Execution
+                    player.velocity.y -= player.gravity;
+                    if (keys[' '] && player.onGround) {
+                        player.velocity.y = player.jumpForce;
+                        player.onGround = false;
+                    }
                 }
 
+                // Apply positional updates against collision limits
                 let nextPos = player.pos.clone();
                 nextPos.x += player.velocity.x;
                 if (checkCollision(nextPos)) { nextPos.x -= player.velocity.x; player.velocity.x = 0; }
@@ -456,9 +514,8 @@
                 nextPos.z += player.velocity.z;
                 if (checkCollision(nextPos)) { nextPos.z -= player.velocity.z; player.velocity.z = 0; }
 
-                // Check for Void boundaries to prevent falling indefinitely
                 if(nextPos.y < -5) {
-                    nextPos.set(40, 16, 40); // Respawn back at center safely
+                    nextPos.set(40, 15, 40);
                     player.velocity.set(0,0,0);
                 }
 
